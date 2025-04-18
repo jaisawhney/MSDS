@@ -1,0 +1,239 @@
+---
+title: "COVID19 Data Final"
+date: "2025-04-17"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+### Data
+
+Since early 2020, John Hopkins University has maintained publicly available time-series datasets on its GitHub for COVID-19 cases and deaths worldwide. In the United States, daily county-level counts of cases and deaths were tracked from January 22, 2020, until March 10, 2023, when the GitHub repo was archived.
+
+**Data Source:** <https://github.com/CSSEGISandData/COVID-19>
+
+### Objective
+
+My objective with this report is to examine the COVID-19 data for the two most populated states in the United States, California, and Texas, throughout the pandemic:
+
+- Compare daily COVID-19 cases per 100k between California and Texas
+- Compare daily COVID-19 deaths per 100k between California and Texas
+- Analyze the daily and cumulative death-to-case ratios
+- Draw any conclusions from the above
+
+## Setup
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+## Data Import
+
+#### Get the links to the CSV files from the GitHub repo
+
+```{r get_links}
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names = c("time_series_covid19_confirmed_US.csv",
+               "time_series_covid19_deaths_US.csv")
+
+urls = str_c(url_in, file_names)
+urls
+```
+
+#### Import and assign the data to US_cases and US_deaths
+
+```{r import_data}
+US_cases = read_csv(urls[1], show_col_types = FALSE)
+US_deaths = read_csv(urls[2], show_col_types = FALSE)
+
+head(US_cases)
+head(US_deaths)
+```
+
+## Data Tidying
+
+Tidy the data by combining the cases and deaths into one table and only keeping the columns needed.
+
+```{r tidy_data}
+# Pivot the cases for the two states
+combined_cases <- US_cases %>%
+  filter(Province_State %in% c("California", "Texas")) %>%
+  pivot_longer(
+    cols = -(UID:Combined_Key),
+    names_to = "date",
+    values_to = "total_cases"
+  ) %>%
+  group_by(Province_State, date) %>%
+  summarise(total_cases = sum(total_cases, na.rm = TRUE),
+            .groups = 'drop') %>%
+  mutate(date = mdy(date)) %>%
+  rename(state = Province_State)
+
+# Pivot the deaths for the two states
+combined_deaths <- US_deaths %>%
+  filter(Province_State %in% c("California", "Texas")) %>%
+  pivot_longer(
+    cols = -(UID:Population),
+    names_to = "date",
+    values_to = "total_deaths"
+  ) %>%
+  group_by(Province_State, date) %>%
+  summarise(
+    total_deaths = sum(total_deaths, na.rm = TRUE),
+    population = sum(Population, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(date = mdy(date)) %>%
+  rename(state = Province_State)
+
+# Join the cases and deaths into one table
+combined_covid <- combined_cases %>%
+  left_join(combined_deaths, by = c("state", "date")) %>%
+  select(state, population, date, total_cases, total_deaths)
+
+# Filter out invalid data
+combined_covid <- combined_covid %>%
+  filter(!is.na(total_cases) & !is.na(total_deaths))
+
+head(combined_covid)
+```
+
+## Data Transformation
+
+Transform the data to create the columns needed for the analysis.
+
+```{r transform_data}
+combined_covid <- combined_covid %>%
+  arrange(state, date) %>%
+  mutate(
+    # Compare the total # of cases and deaths to the previous day to get the daily data
+    daily_cases = pmax(total_cases - lag(total_cases, default = 0), 0),
+    daily_deaths = pmax(total_deaths - lag(total_deaths, default = 0), 0),
+    
+    # Gotta use per 100k to account for the population difference between the two states
+    daily_cases_per_100k = (daily_cases / population) * 100000,
+    daily_deaths_per_100k = (daily_deaths / population) * 100000,
+    
+    # Make sure to never divide by zero
+    death_case_ratio = if_else(total_cases > 0, total_deaths / total_cases, 0),
+    daily_death_case_ratio = if_else(daily_cases > 0, daily_deaths / daily_cases, 0)
+  )
+
+head(combined_covid)
+```
+
+**Columns**
+
+-   **daily_cases** The number of cases a day
+-   **daily_deaths** The number of deaths a day
+-   **daily_cases_per_100k** Normalized daily cases (cases per 100k)
+-   **daily_deaths_per_100k** Normalized daily deaths (deaths per 100k)
+-   **death_case_ratio** Cumulative death / case ratio
+-   **daily_death_case_ratio** Daily death / case ratio
+
+## Visualizations
+
+**Daily Cases per 100k**
+
+```{r}
+ggplot(combined_covid, aes(x = date, y = daily_cases_per_100k, color = state)) +
+  geom_smooth(method = "loess", se = FALSE, span = 0.25) +
+  labs(
+    title = "Daily COVID Cases per 100k by State",
+    x = "Date (Month, Year)",
+    y = "Cases per 100k",
+    color = "State"
+  ) +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months")
+```
+
+**Daily Deaths per 100k**
+
+```{r}
+ggplot(combined_covid, aes(x = date, y = daily_deaths_per_100k, color = state)) +
+  geom_smooth(method = "loess", se = FALSE, span = 0.25) +
+  labs(
+    title = "Daily COVID Deaths per 100k by State",
+    x = "Date (Month, Year)",
+    y = "Deaths per 100k",
+    color = "State"
+  ) +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months")
+```
+
+**Daily Death-to-Case Ratio**
+
+```{r}
+# Model the daily death to case ratio
+ggplot(combined_covid, aes(x = date, y = daily_death_case_ratio, color = state)) +
+  geom_point(alpha = 0.15) +
+  geom_smooth(method = "loess", se = FALSE, span = 0.25) +
+  labs(
+    title = "Daily Death to Case Ratio Over Time",
+    x = "Date (Month, Year)",
+    y = "Deaths / Case",
+    color = "State"
+  ) +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months")
+```
+
+**Cumulative Death-to-Case Ratio**
+
+```{r}
+ggplot(combined_covid, aes(x = date, y = death_case_ratio, color = state)) +
+  geom_line() +
+  labs(
+    title = "Cumulative Death to Case Ratio Over Time",
+    x = "Date (Month, Year)",
+    y = "Deaths / Case",
+    color = "State"
+  ) +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months")
+```
+
+## Analysis & Conclusion
+
+The above visualizations, normalized for population size, reveal major differences in how California and Texas experienced the COVID-19 pandemic. Below is my analysis of each visualization, along with a discussion of potential biases in the data. It is interesting how the visualizations show surges in cases/deaths during the pandemic.
+
+### Cases per 100k
+
+Throughout the pandemic, California consistently reported higher daily COVID-19 cases perk 100k residents compared to Texas during most big surges. This trend suggests that California may have had higher transmission rates, more comprehensive testing, or both.
+
+### Deaths per 100k
+
+In contrast, Texas experienced higher daily deaths per 100k throughout most of the pandemic. These differences could be attributed to differences in healthcare, case severity, or the criteria for attributing deaths to COVID-19.
+
+### Death-to-case Ratios
+
+#### Daily
+
+While California had a spike in the daily death-to-case ratio in early 2021, Texas generally maintained a higher ratio until around late 2021, when the ratios for both states converged.
+
+#### Cumulative
+
+Cumulatively, Texas's death-to-case ratio remained higher than California's during the pandemic, with both states plateauing by early-mid 2022.
+
+### Conclusion
+
+California saw higher case counts per 100k but lower deaths per 100k, while Texas saw fewer reported cases but a higher overall mortality rate. This may suggest that the pandemic hit Texas harder or that California's testing was more robust, capturing more mild cases.
+
+The convergence in daily death-to-case ratios by late 2021 is likely because of a combination of improved treatment options, expanded vaccine coverage, and more standardized reporting.
+
+#### Potential Biases
+
+- Differences in testing availability, public participation, and reporting criteria likely influenced the recorded case counts
+
+- The two states may have used varying definitions for what is considered a COVID-19 case/death, potentially under counting mild cases
+
+- Policy differences, such as mask mandates, social distancing guidelines, and vaccine use, may have affected transmission and outcomes. For example, lower mask usage in Texas may have contributed to higher mortality rates

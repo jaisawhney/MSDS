@@ -1,0 +1,179 @@
+---
+title: "NYPD Shooting Report Final"
+date: "4/17/2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Import Libraries
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+## Introduction
+
+### Data
+
+This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website.
+
+**From** <https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic>
+
+### Objective
+
+My objective is to see how the number of shootings in New York City changes over time and speculate what world events may have impacted the rates (e.g. COVID-19).
+
+## Load and Prepare the Data
+
+Load the data set provided by the City of New York. This public dataset contains detailed records of shooting incidents reported by the New York Police Department.
+
+```{r import_data}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+data_nypd <- read_csv(url_in, show_col_types = FALSE)
+```
+
+### Tidy and Transform Data
+
+First, remove all the unneeded columns, only keeping the ones needed.
+
+```{r clean_data}
+data_nypd_clean <- data_nypd %>%
+  select(c("OCCUR_DATE", "OCCUR_TIME", "BORO")) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME),
+         HOUR = hour(OCCUR_TIME),
+         YEAR = year(OCCUR_DATE),
+         YEAR_MONTH = floor_date(OCCUR_DATE, "month"),
+         WEEKDAY = wday(OCCUR_DATE, label = TRUE, abbr = FALSE))
+```
+
+**Columns**
+
+-   **OCCUR_DATE** Date of shooting incident
+-   **OCCUR_TIME** Time of shooting incident
+-   **BORO** Borough where the shooting occurred
+-   **HOUR** Hour in which the shooting occurred
+-   **YEAR** Year in which the shooting occurred
+-   **YEAR_MONTH** Year-month combination of the above
+
+## When Do Shootings Happen?
+
+### Total Shootings by Hour of Day
+
+```{r shootings_by_hour}
+data_nypd_clean %>%
+  group_by(HOUR) %>%
+  summarise(SHOOTINGS = n(), .groups = "drop") %>%
+  ggplot(aes(x = HOUR, y = SHOOTINGS)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Total Shootings by Hour of Day",
+       x = "Hour of the Day (24h)",
+       y = "Number of Shootings") +
+  theme_minimal()
+```
+
+### Total Shootings by Day of the Week
+
+```{r shootings_by_weekday}
+data_nypd_clean %>%
+  group_by(WEEKDAY) %>%
+  summarise(SHOOTINGS = n(), .groups = "drop") %>%
+  ggplot(aes(x = WEEKDAY, y = SHOOTINGS, group = 1)) +
+  geom_col(fill = 'lightblue') +
+  labs(
+    title = "Total Shootings by Day of the Week",
+    x     = "Day of Week",
+    y     = "Number of Shootings"
+  ) +
+  theme_minimal()
+```
+
+## Where and How Often?
+
+### Shootings by Borough by Year
+
+```{r shootings_by_borough}
+data_nypd_clean %>%
+  group_by(YEAR, BORO) %>%
+  summarise(SHOOTINGS = n(), .groups = "drop") %>%
+  ggplot(aes(x = YEAR, y = SHOOTINGS, color = BORO)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Shootings by Borough by Year",
+       x = "Date",
+       y = "Number of Shootings",
+       color = "Borough") +
+  theme_minimal()
+```
+
+## How Did Shootings Change Over the Years?
+
+### Monthly Shooting Trends
+
+```{r shootings_by_month}
+data_nypd_clean %>%
+  group_by(YEAR_MONTH) %>%
+  summarise(SHOOTINGS = n(), .groups = "drop") %>%
+  ggplot(aes(x = YEAR_MONTH, y = SHOOTINGS)) +
+  geom_line() +
+  geom_smooth(method = "loess", span = 0.3, se = FALSE, linetype = "dashed") +
+  labs(title = "Monthly Shooting Trends",
+       x = "Date",
+       y = "Number of Shootings") +
+  theme_minimal()
+```
+
+### Monthly Shooting Trends (2020–2023)
+
+```{r shootings_by_month_covid}
+data_nypd_clean %>%
+  filter(YEAR >= 2020, YEAR <= 2023) %>%
+  group_by(YEAR_MONTH) %>%
+  summarise(SHOOTINGS = n(), .groups = "drop") %>%
+  ggplot(aes(x = YEAR_MONTH, y = SHOOTINGS)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "loess", span = 0.3, se = FALSE, linetype = "dashed") +
+  labs(
+    title = "Monthly Shooting Trends (2020–2023)",
+    x = "Date (Month, Year)",
+    y = "Number of Shootings"
+  ) +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months")
+```
+
+## Analysis & Conclusion
+
+### Total Shootings by Hour of Day
+
+Most shootings happen in the later hours of the day, especially from 8 PM onward, with a noticeable peak at midnight (00:00), which may be because of more social activity during these hours.
+
+### Total Shootings by Day of the Week
+
+Shootings are more common on weekends, especially Saturday and Sunday, likely due to larger gatherings and social activities.
+
+### Shootings by Borough by Year
+
+Brooklyn and the Bronx show the highest number of shootings over the years with Staten Island consistently recording the fewest incidents. The total number of shootings per year trended downward for all boroughs until 2020, followed by a sharp increase related to the COVID-19 pandemic-related disruptions such as lockdowns and social distancing.
+
+### Monthly Shooting Trends
+
+The number of shooting incidents in New York City fluctuates by season, often rising in warmer months. There was a strong downward trend from 2006 to around 2018, after which incidents rose again sharply, especially in 2020.
+
+### Monthly Shooting Trends (2020–2023)
+
+From 2020 to 2022, there was a sharp and unprecedented increase in shootings, which then gradually declined by 2023, which may reflect the stress that many people experienced during and after the COVID-19 pandemic.
+
+### Conclusion
+
+Late-night hours and weekends see the highest activity for shootings, with Brooklyn and the Bronx consistently recording the most incidents annually. The number of shootings remained relatively stable for years until a sudden citywide spike occurred during the COVID-19 pandemic, especially in 2020 and 2021. After peaking, the trend reversed and started returning to pre-pandemic levels by 2023.
+
+#### Potential Biases
+
+While the above analysis shows trends, it’s important to consider any biases in the dataset dataset. It's important to note that not all shootings are reported. Underreporting and disparities in each borough may skew the data and should be considered when looking at the data.
